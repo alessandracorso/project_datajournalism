@@ -1,0 +1,833 @@
+---
+title: "Incidenti a Trento: Analisi e Statistiche dal 2003 ad oggi"
+author: "Corso Alessandra (ID: 205149)"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+# The code can be run only after downloading datasets from Google Drive folder at
+# https://drive.google.com/drive/folders/1rurddYtPGcTJi3Jf2FJ-E2jUSCslQpjj
+
+# Libraries
+library(dplyr)
+library(foreign)
+library(gapminder)
+library(gganimate)
+library(ggplot2)
+library(gifski)
+library(grid)
+library(hash)
+library(hrbrthemes)
+library(htmlwidgets)
+library(igraph)
+library(leaflet)
+library(multiplex)
+library(plotly)
+library(RColorBrewer)
+library(revgeo)
+library(tidyverse)
+library(viridis)
+library(webshot)
+```
+
+```{r}
+df <- read.dbf("incidenti.dbf") # open the dataset about accidents
+names(df) # columns names
+summary(df$anno) # from 2002 to 2020 (until the previous month)
+dim(df) # dataset dimension
+head(df,3) # to show first rows of the dataset
+```
+
+```{r}
+# DATA CLEANING
+# building a new simple data frame to analyse
+
+# EXAMPLE to understand the structure
+sum(is.na(df$anno)) # some NA values in the column "anno"
+sum(is.na(df$numero)) # the same number of NA values in the column "numero"
+df <- df[!is.na(df$anno),] # data frame without NA values (31 rows)
+dim(df) # dimension of data frame
+
+# Analysing a first complete year (example: 2003)
+df.2003 <- df[df$anno==2003,] # selecting only 2003 year
+tb.2003 <- data.frame(table(df.2003$numero)) # analysing the column "numero"
+names(tb.2003) <- c("numero", "frequenza") # changing data frame columns names
+sum(tb.2003$frequenza!=1) # all numbers have frequency = 1
+summary(df.2003$numero) # numero: from 1 to 1233 (maximum)
+length(df.2003$numero) # length of the column (a difference of 3 numbers, why?)
+sum(duplicated(df.2003$numero)) # none number is duplicated
+s <- seq(1:max(df.2003$numero)) # sequence from 1 to maximum
+which(!(s %in% df.2003$numero)) # in fact, three missing values
+
+# There are some errors.
+# During the writing process, it is possible that some numbers have been forgotten
+# for example, for the wrong sequence c(1,2,3,5,6), I consider c(1,2,3,4,5)
+# Data cleaning: consider the length of the column as effective number of accidents in the corresponding year.
+```
+```{r}
+# I remove the 2002 year because it is incomplete.
+# 2020 will be analysed separatly because there are 8 complete months, from January to August
+
+s <- seq(2003,2019) # sequence from 2003 to 2019
+# one data frame for each year
+for(e in s){
+  assign(paste0("df.",e), df[df$anno==e,])
+}
+
+n <- vector() # initialization of an empty vector
+for(e in s){
+  data <- get(paste0("df.",e))
+  n <- append(n, length(data$numero)) # number of accidents for each year
+}
+
+freq <- data.frame(anno=s, numero=n) # data frame with year and accidents number
+
+t.test(1:max(freq$numero), 1:min(freq$numero))
+# two means are significantly different (in comparison 2003 and 2019)
+```
+```{r}
+ini <- data.frame(anno=s, numero=rep(0, length(s)), frame="a") # data frame indicating first state condition in the animation (from 0)
+freq$frame <- "b" # adding the state condition (the second)
+fin <- rbind(ini,freq) # join two data frames
+
+a1 <- mean(fin$numero[18:25]) # mean of accidents 2003-2010
+a2 <- mean(fin$numero[26:34]) # mean of accidents 2011-2019
+per <- 1082.5-(26/100*1082.5) # to calculate the percentage of decrease
+```
+
+```{r}
+# Visualization of histogram
+myPlot <- ggplot(fin, aes(x=anno, y=numero, fill=numero)) +
+  geom_bar(stat="identity", colour="black") +
+  theme_minimal() +
+  labs(title="Numero di incidenti all'anno", y="numero di incidenti", legend="") +
+  scale_x_continuous(breaks=seq(from=2003, to=2019, by=2)) +
+  scale_y_continuous(breaks=seq(from=0, to=1250, by=100)) +
+  scale_fill_viridis(option="inferno", direction=-1, limits=c(min(fin[fin$frame=="b",]$numero),max(fin$numero)), alpha=0.8, name="") +
+  transition_states(frame, transition_length=2, state_length=1, wrap=FALSE) +
+  ease_aes('sine-in-out') +
+  theme(plot.title=element_text(size=25, face="bold"), axis.title=element_text(size=20), axis.text=element_text(size=15), legend.title=element_text(size=20), legend.text=element_text(size=15))
+
+# animation
+animate(myPlot, duration = 5, fps = 20, width = 700, height = 600, renderer = gifski_renderer(loop=FALSE))
+anim_save("Numero_incidenti_histogram.gif") # saving the gif
+write.csv(df,"df.csv") # save the data frame as csv
+
+# Interaction (not showed in the article)
+# I can show an interacted plot on Medium only after article publication
+# It is possible to share the link to html document
+# In the article there is the animated histogram
+
+myPlot2 <- ggplotly(myPlot, tooltip=c("x","y")) # turn it interactive with ggplotly
+myPlot2
+saveWidget(myPlot2, file="Numero_incidenti_histogram_interaction.html") # save the widget
+```
+
+```{r}
+# Interactive map
+# x_gps and y_gps (columns in the data frame) are longitude and latitude
+
+# one data frame for each year with gps positions of accidents
+for(e in s){
+  d <- get(paste0("df.",e))
+  assign(paste0("df.",e,"_dw"), data.frame(lat=d$y_gps, long=d$x_gps))
+  write.csv(get(paste0("df.",e,"_dw")), paste0("df.",e,"_dw.csv")) # saving the data frames as csv
+}
+
+# considering also 2020 until the previous month (August)
+df.2020 <- df[df$anno==2020,]
+df.2020_dw <- data.frame(lat=df.2020$y_gps, long=df.2020$x_gps)
+write.csv(df.2020_dw, "df.2020_dw.csv") # saving the data frame as csv
+```
+
+```{r}
+# CODE TO RUN FOR EACH YEAR
+# for each year an edit of the dataframe, with the street, housenumber and zip new columns
+
+#d <- read.csv("df.2013_dw.csv")
+#for(n in 1:nrow(d)){
+  #out <- revgeo(d$long[n], d$lat[n], provider="photon", output="frame")
+  #d$via[n] <- paste(out$street, out$housenumber) # adding the column "via"
+  #d$zip[n] <- out$zip # adding the column "zip"
+#}
+#write.csv(d, "df.2013_inf.csv") # saving the data frame as csv
+
+# the previous code is very long, so I will give directly the csv
+# datasets can be downloaded from Google Drive folder at
+# https://drive.google.com/drive/folders/1rurddYtPGcTJi3Jf2FJ-E2jUSCslQpjj
+t <- append(s, 2020)
+for(e in t){
+  d <- paste0("df.",e,"_inf.csv")
+  assign(paste0("df.",e,"_inf"), read.csv(d)) # writing the new dataframes
+}
+```
+
+```{r}
+# CODE TO RUN FOR EACH YEAR
+# data cleaning
+
+# some edits to dataframe to add text which will be showed in interactive maps
+d <- read.csv("df.2013_inf.csv") # open the saved data frame with "via" and "zip" information
+for(n in 1:nrow(d)){
+  if(sub("(\\w+).*", "\\1", d$via[n])=="Street"){
+     # if the street was not found
+    d$via[n] <- paste("lat",round(d$lat[n],4),"; long",round(d$long[n],4))
+     # change the showed information
+  }
+}
+
+for(n in 1:nrow(d)){
+  if(tail(strsplit(d$via[n], split=" ")[[1]],1)=="Found"){
+     # if the housenumber was not found
+    d$via[n] <- gsub(" House Number Not Found","", d$via[n])
+     # change the showed information
+  }
+}
+
+write.csv(d, "df.2013_inf_new.csv") # saving new dataframes with new information
+
+# I will give directly the csv of all years
+# they can be dowloaded from Google Drive folder at
+# https://drive.google.com/drive/folders/1rurddYtPGcTJi3Jf2FJ-E2jUSCslQpjj
+t <- append(s, 2020)
+for(e in t){
+  d <- paste0("df.",e,"_inf_new.csv")
+  assign(paste0("df.",e,"_inf_new"), read.csv(d)) # writing the new dataframes
+}
+```
+
+```{r}
+# CODE TO RUN FOR EACH YEAR
+# Here example with 2003
+
+# Maps thorugh leaflet
+# Prepare the text for the tooltip:
+mytext <- paste(df.2003_inf_new$via) %>% # text which appears in interactive map
+  lapply(htmltools::HTML)
+# name of street, if detected, otherwise values of latitude and longitude
+
+# visualization of interactive maps
+m <- leaflet(df.2003_inf_new) %>%
+  addTiles()  %>% 
+  setView(lat=46.07, lng=11.12 , zoom=12) %>%
+  addProviderTiles("Esri.WorldImagery") %>%
+  addCircleMarkers(~long, ~lat, 
+    fillColor = "red", fillOpacity = 0.7, color="white", radius=8, stroke=FALSE,
+    label = mytext,
+    labelOptions = labelOptions( style = list("font-weight" = "normal", padding = "3px 8px"), textsize = "13px", direction = "auto")
+  )
+m
+saveWidget(m, file="TrentoMap_incidenti.2003.html") # saving the map as html
+```
+```{r}
+# Analysis of accidents of three different areas of Trento: zip codes 38121, 38122, 38123
+for(e in s){ # for each dataset of each year
+  d <- read.csv(paste0("df.",e,"_inf_new.csv")) # reading the last built data frame
+  diz <- hash() # initialize an empty dictionary
+  for(n in 1:nrow(d)){
+    if(!(as.character(d$zip[n]) %in% keys(diz))){
+      diz[[as.character(d$zip[n])]] <- 1 # keys are the zip codes
+    }
+    diz[[as.character(d$zip[n])]] <- diz[[as.character(d$zip[n])]] + 1
+    # values are the number of accidents in that area
+  }
+  assign(paste0("diz_df.",e), data.frame(cap=keys(diz), tot=values(diz)))
+  # transforming the dictionary in a dataframe
+  dfr <- get(paste0("diz_df.",e))
+  rownames(dfr) <- 1:nrow(dfr) # changing row names
+  assign(paste0("diz_df.",e), dfr)
+  # creating different dataframes for each year
+}
+
+all_codes <- vector() # an empty vector, values of all zip codes for all years
+for(e in s){
+  df <- get(paste0("diz_df.",e)) # analysing all years
+  for(n in 1:nrow(df)){
+    if(!(df$cap[n] %in% all_codes)){
+      all_codes <- append(all_codes, df$cap[n]) # adding new zip codes
+    }
+  }
+}
+all_codes <- sort(all_codes) # sorting the list of codes
+
+for(e in s){
+  df <- get(paste0("diz_df.",e)) # getting all dataframes
+  caps <- df$cap # vector of caps for each year
+  for(code in all_codes){
+    if(!(code %in% caps)){
+      df <- df %>% add_row(cap=code, tot=0) # adding new rows for each missing zip code
+    }
+    
+  }
+  df <- df[order(df$cap),] # ordering the column "cap" (equal for all dataframes)
+  rownames(df) <- seq(1:nrow(df)) # changing the row names
+  assign(paste0("diz_df.",e),df) # assing the dataframe
+}
+# Now all dataframes have the same length
+```
+
+```{r}
+# Unique dataframe to analyse number of accidents in three areas of Trento
+
+df_line.chart <- data.frame(cap=sort(all_codes), tot.2003=diz_df.2003$tot)
+for(e in s[2:length(s)]){
+  df <- get(paste0("diz_df.",e))
+  df_line.chart <- cbind(df_line.chart, df$tot) # merging dataframes
+}
+names(df_line.chart) <- append("cap", s) # changing column names
+
+df_Trento <- df_line.chart[c(13,14,15),] # select only three zip codes
+rownames(df_Trento) <- c("Trento Nord", "Trento Centro", "Trento Sud") # rename the column "cap"
+df_Trento <- df_Trento[,c(2:ncol(df_Trento))] # delete the first column of caps
+
+# columns become rows and viceversa
+df_tn_plot <- data.frame(anno=s, Trento_Nord_incidenti=rep(NA,17), Trento_Centro_incidenti=rep(NA,17), Trento_Sud_incidenti=rep(NA,17))
+for(n in 1:17){
+  df_tn_plot$Trento_Nord_incidenti[n] <- df_Trento[1,n]
+  df_tn_plot$Trento_Centro_incidenti[n] <- df_Trento[2,n]
+  df_tn_plot$Trento_Sud_incidenti[n] <- df_Trento[3,n]
+}
+```
+
+```{r}
+# Colors
+pal <- brewer.pal(3, "Set1")
+legend_ord <- c("Trento Nord (cap 38121)", "Trento Centro (cap 38122)", "Trento Sud (cap 38123)") # sorting the names in the legend
+
+# Visualization of scatter plot
+p <- df_tn_plot %>%
+  ggplot() +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Nord_incidenti, color="Trento Nord (cap 38121)"),size=1) +
+  geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Nord_incidenti, fill="Trento Nord (cap 38121)", group=seq_along(anno)), shape=21, color="black", size=4) +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Centro_incidenti, color="Trento Centro (cap 38122)"),size=1) +
+    geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Centro_incidenti, fill="Trento Centro (cap 38122)", group=seq_along(anno)), shape=21, color="black", size=4) +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Sud_incidenti, color="Trento Sud (cap 38123)"),size=1) +
+  geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Sud_incidenti, fill="Trento Sud (cap 38123)", group=seq_along(anno)), shape=21, color="black", size=4) +
+  labs(x="anno", y="numero di incidenti", title="Andamento negli anni del numero di incidenti", subtitle="Analisi di tre zone diverse di Trento") +
+  scale_x_continuous(breaks=seq(2003,2019,2),limits=c(2003,2019),labels=seq(2003,2019,2)) +
+  scale_y_continuous(breaks=seq(0,450,50),limits=c(0,450),labels=seq(0,450,50)) +
+  scale_fill_manual(breaks=legend_ord, values=alpha(c("Trento Nord (cap 38121)"=pal[1], "Trento Centro (cap 38122)"=pal[3], "Trento Sud (cap 38123)"=pal[2]),0.6), guide="none") +
+  scale_color_manual(breaks=legend_ord, values=c("Trento Nord (cap 38121)"=pal[1], "Trento Centro (cap 38122)"=pal[3], "Trento Sud (cap 38123)"=pal[2])) +
+  theme_minimal() +
+  transition_reveal(anno) +
+  theme(plot.title=element_text(size=25, face="bold"),
+        plot.subtitle=element_text(size=20), axis.title=element_text(size=20), axis.text=element_text(size=15), legend.title=element_blank(), legend.text=element_text(size=15)) +
+  theme(legend.key.width = unit(1.5,"cm"))
+
+animate(p, duration = 5, fps = 20, width = 700, height = 600, renderer = gifski_renderer(loop=FALSE))
+anim_save("Andamento_incidenti_lineplot.gif") # saving the gif
+
+# Interactive plot to change the line size and legend position (the plot is not showed in the article)
+# I can show an interacted plot on Medium only after article publication
+# It is possible to share the link to html document
+# In the article there is the animated scatter plot
+
+pi <- df_tn_plot %>%
+  ggplot() +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Nord_incidenti, color="Trento Nord (cap 38121)")) +
+  geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Nord_incidenti, fill="Trento Nord (cap 38121)"), shape=21, color="black", size=2) +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Centro_incidenti, color="Trento Centro (cap 38122)")) +
+    geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Centro_incidenti, fill="Trento Centro (cap 38122)"), shape=21, color="black", size=2) +
+  geom_line(data=df_tn_plot, aes(x=anno, y=Trento_Sud_incidenti, color="Trento Sud (cap 38123)")) +
+  geom_point(data=df_tn_plot, aes(x=anno, y=Trento_Sud_incidenti, fill="Trento Sud (cap 38123)"), shape=21, color="black", size=2) +
+  labs(x="anno", y="numero di incidenti", title="Andamento negli anni del numero di incidenti", subtitle="Analisi di tre zone diverse di Trento", color="") +
+  scale_x_continuous(breaks=seq(2003,2019,2),limits=c(2003,2019),labels=seq(2003,2019,2)) +
+  scale_y_continuous(breaks=seq(0,450,50),limits=c(0,450),labels=seq(0,450,50)) +
+  scale_fill_manual(breaks=legend_ord, values=alpha(c("Trento Nord (cap 38121)"=pal[1], "Trento Centro (cap 38122)"=pal[3], "Trento Sud (cap 38123)"=pal[2]),0.6), guide="none") +
+  scale_color_manual(breaks=legend_ord, values=c("Trento Nord (cap 38121)"=pal[1], "Trento Centro (cap 38122)"=pal[3], "Trento Sud (cap 38123)"=pal[2]), labels=c("Nord", "Centro", "Sud")) +
+  theme_minimal() +
+  transition_reveal(anno) +
+  theme(plot.title=element_text(size=25, face="bold"), plot.subtitle=element_text(size=20), axis.title=element_text(size=20), axis.text=element_text(size=15), legend.title=element_text(), legend.text=element_text(size=15)) +
+  theme(legend.key.width = unit(1.5,"cm")) +
+  theme(legend.position="none")
+
+# turn it interactive with ggplotly
+pi <- ggplotly(pi, tooltip=c("x","y"))
+pi
+saveWidget(pi, file="Andamento_incidenti_lineplot_interaction.html") # save the widget
+```
+
+```{r}
+# CHIUSURA DEL CASELLO TRENTO CENTRO IN USCITA (23 maggio 2011)
+# Study of the variation of the accident number in the area near motorway exit (about 2 km^2)
+
+# Area of 2 km^2 with motorway exit in the center of the square
+lat1 <- 46.07305556
+lat2 <- 46.08500000
+long1 <- 11.10138889
+long2 <- 11.12333333
+# (long1, lat1) is the bottom left point of the perimeter
+# (long2, lat2) is the point at the top right of the perimeter
+
+cas_centro <- data.frame(anno=s, numero=rep(NA, 17)) # data frame with two columns "anno" and "numero" of accidents
+
+# how many accidents within the area? In different years
+for(e in 1:length(s)){
+  d <- get(paste0("df.",s[e],"_dw")) # dataframe of each year
+  count <- 0 # counting from 0
+  for(n in 1:nrow(d)){ # for each row of the dataframe
+    if((d$lat[n]>=lat1)&(d$lat[n]<=lat2)&(d$long[n]>=long1)&(d$long[n]<=long2)){
+      count <- count + 1 # count plus 1 if the accident was within the area
+    }
+  }
+  cas_centro$numero[e] <- count # adding the sum in the column "numero"
+}
+
+cas_centro$col <- append(append(rep("a",8),"b"),rep("a",8)) # different colors between all years and 2011
+media1 <- mean(cas_centro$numero[1:8]) # mean of accidents before the closing
+media2 <- mean(cas_centro$numero[10:17]) # mean of accidents after the closing
+
+pal1 <- brewer.pal(9, "Greens")[3] # colors of all years
+pal2 <- brewer.pal(9, "Greens")[8] # color of 2011
+pal3 <- brewer.pal(9, "Set1")[1] # red for means
+
+# Visualization of histogram
+p <- ggplot(cas_centro, aes(x=anno, y=numero, fill=col)) +
+  geom_bar(stat="identity", colour="black") +
+  theme_minimal() +
+  labs(title="Casello Trento Centro", subtitle="Numero di incidenti nelle vicinanze", y="numero di incidenti") +
+  scale_x_continuous(breaks=seq(from=2003, to=2019, by=2)) +
+  scale_y_continuous(breaks=seq(from=0, to=200, by=25)) +
+  scale_fill_manual(values=alpha(c(pal1,pal2),0.8)) +
+  geom_text(x=2012.9, y=133, label="Chiusura Casello in uscita", col=pal2, size=5, fontface="bold") +
+  geom_text(x=2012, y=127, label="23 maggio 2011", col=pal2, size=5, fontface="bold") +
+  theme(legend.position="none") +
+  geom_segment(aes(x=2002.5, y=media1, xend=2010.5, yend=media1, linetype="a"), color=pal3, size=1) +
+  geom_text(x=2006, y=148, label="media incidenti 2003-2010", col=pal3, size=5) +
+  geom_segment(aes(x=2011.5, y=media2, xend=2019.5, yend=media2, linetype="b"), color=pal3, size=1) +
+  geom_text(x=2016, y=115, label="media incidenti 2012-2019", col=pal3, size=5) +
+  scale_linetype_manual(values=c("dashed","dashed")) +
+  transition_states(anno, transition_length = 1, state_length = 50) +
+  ease_aes('linear') +
+  theme(plot.title=element_text(size=25, face="bold"), axis.title=element_text(size=20), axis.text=element_text(size=15), plot.subtitle=element_text(size=20)) +
+  shadow_mark(past = TRUE)
+
+animate(p, duration = 10, fps = 20, width = 700, height = 600, renderer = gifski_renderer(loop=FALSE))
+anim_save("Casello_Trento_Centro_histogram.gif") # saving the gif
+
+# Visualization of interactive histogram to change positions of geom_text
+# (the plot is not showed in the article)
+# I can show an interacted plot on Medium only after article publication
+# It is possible to share the link to html document
+# In the article there is the animated histogram
+
+pint <- ggplot(cas_centro, aes(x=anno, y=numero, fill=col)) +
+  geom_bar(stat="identity", colour="black") +
+  theme_minimal() +
+  labs(title="Casello Trento Centro", subtitle="Numero di incidenti nelle vicinanze", y="numero di incidenti") +
+  scale_x_continuous(breaks=seq(from=2003, to=2019, by=2)) +
+  scale_y_continuous(breaks=seq(from=0, to=200, by=25)) +
+  scale_fill_manual(values=alpha(c(pal1,pal2),0.8)) +
+  geom_text(x=2013.5, y=133, label="Chiusura Casello in uscita", col=pal2, size=5, fontface="bold") +
+  geom_text(x=2012.5, y=127, label="23 maggio 2011", col=pal2, size=5, fontface="bold") +
+  theme(legend.position="none") +
+  geom_segment(aes(x=2002.5, y=media1, xend=2010.5, yend=media1, linetype="a"), color=pal3, size=1) +
+  geom_text(x=2006, y=148, label="media incidenti 2003-2010", col=pal3, size=4) +
+  geom_segment(aes(x=2011.5, y=media2, xend=2019.5, yend=media2, linetype="b"), color=pal3, size=1) +
+  geom_text(x=2016, y=115, label="media incidenti 2012-2019", col=pal3, size=4) +
+  scale_linetype_manual(values=c("dashed","dashed")) +
+  transition_states(anno, transition_length = 1, state_length = 50) +
+  ease_aes('linear') +
+  theme(plot.title=element_text(size=20, face="bold"), axis.title=element_text(size=15), axis.text=element_text(size=8), plot.subtitle=element_text(size=15)) +
+  shadow_mark(past = TRUE)
+
+pint <- ggplotly(pint, tooltip=c("x","y")) # turn it interactive with ggplotly
+pint
+saveWidget(pint, file="Casello_Trento_Centro_histogram_interaction.html") # save the widget
+
+perc <- 141.87-(25/100*141.87) # to calculate the percentage of decrease
+```
+
+```{r}
+# CHIUSURA DELLE GALLERIE DI PIEDICASTELLO E APERTURA MUSEI (19 agosto 2008)
+# Study of the variation of the accident number in the area near motorway exit (about 2 km^2)
+
+# Area of 2 km^2 with motorway exit in the center of the square
+lat1 <- 46.06805556
+lat2 <- 46.07944444
+long1 <- 11.10361111
+long2 <- 11.12555556
+# (long1, lat1) is the bottom left point of the perimeter
+# (long2, lat2) is the point at the top right of the perimeter
+
+gallerie <- data.frame(anno=s, numero=rep(NA, 17)) # data frame with two columns "anno" and "numero" of accidents
+
+# how many accidents within the area? In different years
+for(e in 1:length(s)){
+  d <- get(paste0("df.",s[e],"_dw")) # dataframe of each year
+  count <- 0 # counting from 0
+  for(n in 1:nrow(d)){ # for each row of the dataframe
+    if((d$lat[n]>=lat1)&(d$lat[n]<=lat2)&(d$long[n]>=long1)&(d$long[n]<=long2)){
+      count <- count + 1 # count plus 1 if the accident was within the area
+    }
+  }
+  gallerie$numero[e] <- count # adding the sum in the column "numero"
+}
+
+gallerie$col <- append(append(rep("a",5),"b"),rep("a",11)) # different colors between all years and 2011
+media1 <- mean(gallerie$numero[1:5]) # mean of accidents before the closing
+media2 <- mean(gallerie$numero[7:17]) # mean of accidents after the closing
+write.csv(gallerie, "gallerie.csv") # saving the data frame
+
+pal <- brewer.pal(11, "BrBG") # colors
+pal1 <- pal[5] # colors of all years
+pal2 <- pal[2] # color of 2011
+pal3 <- brewer.pal(9, "Set1")[1] # red for means
+
+# Visualization of histogram
+p <- ggplot(gallerie, aes(x=anno, y=numero, fill=col)) +
+  geom_bar(stat="identity", colour="black") +
+  theme_minimal() +
+  labs(title="Gallerie di Piedicastello", subtitle="Numero di incidenti nelle vicinanze", y="numero di incidenti") +
+  scale_x_continuous(breaks=seq(from=2003, to=2019, by=2)) +
+  scale_y_continuous(breaks=seq(from=0, to=280, by=25)) +
+  scale_fill_manual(values=alpha(c(pal1,pal2),0.8)) +
+  geom_text(x=2012.5, y=220, label="Chiusura Gallerie e apertura Museo", col=pal2, size=5, fontface="bold") +
+  geom_text(x=2010.5, y=210, label="19 agosto 2008", col=pal2, size=5, fontface="bold") +
+  theme(legend.position="none") +
+  geom_segment(aes(x=2002.5, y=media1, xend=2007.5, yend=media1, linetype="a"), color=pal3, size=1) +
+  geom_text(x=2005, y=230, label="media incidenti 2003-2007", col=pal3, size=5) +
+  geom_segment(aes(x=2008.5, y=media2, xend=2019.5, yend=media2, linetype="b"), color=pal3, size=1) +
+  geom_text(x=2013, y=160, label="media incidenti 2009-2019", col=pal3, size=5) +
+  scale_linetype_manual(values=c("dashed","dashed")) +
+  transition_states(anno, transition_length = 1, state_length = 50) +
+  ease_aes('linear') +
+  theme(plot.title=element_text(size=25, face="bold"), axis.title=element_text(size=20), axis.text=element_text(size=15), plot.subtitle=element_text(size=20)) +
+  shadow_mark(past = TRUE)
+
+animate(p, duration = 10, fps = 20, width = 700, height = 600, renderer = gifski_renderer(loop=FALSE))
+anim_save("Gallerie_Piedicastello_histogram.gif") # saving the gif
+
+# Visualization of interactive histogram to change positions of geom_text
+# (the plot is not showed in the article)
+# I can show an interacted plot on Medium only after article publication
+# It is possible to share the link to html document
+# In the article there is the animated histogram
+
+pa <- ggplot(gallerie, aes(x=anno, y=numero, fill=col)) +
+  geom_bar(stat="identity", colour="black") +
+  theme_minimal() +
+  labs(title="Gallerie di Piedicastello", subtitle="Numero di incidenti nelle vicinanze", y="numero di incidenti") +
+  scale_x_continuous(breaks=seq(from=2003, to=2019, by=2)) +
+  scale_y_continuous(breaks=seq(from=0, to=280, by=25)) +
+  scale_fill_manual(values=alpha(c(pal1,pal2),0.8)) +
+  geom_text(x=2013.5, y=220, label="Chiusura Gallerie e apertura Museo", col=pal2, size=5, fontface="bold") +
+  geom_text(x=2011.5, y=210, label="19 agosto 2008", col=pal2, size=5, fontface="bold") +
+  theme(legend.position="none") +
+  geom_segment(aes(x=2002.5, y=media1, xend=2007.5, yend=media1, linetype="a"), color=pal3, size=1) +
+  geom_text(x=2005, y=230, label="media incidenti 2003-2007", col=pal3, size=4) +
+  geom_segment(aes(x=2008.5, y=media2, xend=2019.5, yend=media2, linetype="b"), color=pal3, size=1) +
+  geom_text(x=2013, y=160, label="media incidenti 2009-2019", col=pal3, size=4) +
+  scale_linetype_manual(values=c("dashed","dashed")) +
+  transition_states(anno, transition_length = 1, state_length = 50) +
+  ease_aes('linear') +
+  theme(plot.title=element_text(size=20, face="bold"), axis.title=element_text(size=15), axis.text=element_text(size=8), plot.subtitle=element_text(size=15)) +
+  shadow_mark(past = TRUE)
+
+pa <- ggplotly(pa, tooltip=c("x","y")) # turn it interactive with ggplotly
+pa
+saveWidget(pa, file="Gallerie_Piedicastello_histogram_interaction.html") # save the widget
+```
+```{r}
+# Building a unique data frame with all accidents of all years (from January 2003 to August 2020)
+
+for(e in t){
+  d <- get(paste0("df.",e,"_inf_new")) # for each dataframe of one single year
+  d <- d[,c("lat","long","via","zip")] # selecting only four columns
+  d$anno <- rep(e, nrow(d)) # adding the column "anno"
+  assign(paste0("df.",e,"tot"), d) # reassign
+}
+
+# "tot" is the unique big data frame with all years
+tot <- rbind(df.2003tot, df.2004tot)
+for(e in t[3:length(t)]){
+  df <- get(paste0("df.",e,"tot"))
+  tot <- rbind(tot, df)
+}
+
+tot_incidenti_a <- dim(tot)[1] - dim(df.2020tot)[1]
+# accident number from 2003 to 2020
+
+# Maps thorugh leaflet
+# Prepare the text for the tooltip:
+mytext <- paste0(tot$via, " - anno:", tot$anno) %>% # text which appears in interactive map
+  lapply(htmltools::HTML)
+# name of street, if detected, otherwise values of latitude and longitude, plus the year of the accident
+
+# visualization of map through leaflet
+m <- leaflet(tot) %>%
+  addTiles()  %>% 
+  setView(lat=46.07, lng=11.12 , zoom=12) %>%
+  addProviderTiles("Esri.WorldImagery") %>%
+  addCircleMarkers(~long, ~lat, 
+    fillColor = "red", fillOpacity = 0.7, color="white", radius=8, stroke=FALSE,
+    label = mytext,
+    labelOptions = labelOptions( style = list("font-weight" = "normal", padding = "3px 8px"), textsize = "13px", direction = "auto")
+  )
+m
+saveWidget(m, file="tot.html") # saving the map
+```
+```{r}
+# CRITICAL POINTS NEAR SCHOOLS
+
+# Fixing four variables to discover number of accidents within the area in all years (from 2003 to 2020)
+
+# For example: Via Ponte Alto near school E. Bernardi
+# the lowest coordinates (bottom left point of the square)
+lat1 <- 46.07444444
+long1 <- 11.14305556
+
+# the highest cooedinates (point at the top right of the square)
+lat2 <- 46.07555556
+long2 <- 11.14444444
+
+# how many accidents within the area (the square)? Considering all years
+count <- 0
+for(n in 1:nrow(tot)){
+  if((tot$lat[n]>=lat1)&(tot$lat[n]<=lat2)&(tot$long[n]>=long1)&(tot$long[n]<=long2)){
+    count <- count + 1
+  }
+}
+```
+
+```{r}
+# SUMMARY CRITICAL POINTS
+# FOR EACH SCHOOL THE MOST CRITICAL POINT
+
+# SCUOLE ELEMENTARI (Scuola primaria)
+# Data cleaning
+# Delete schools with a number of accident < 1 per year (at least 17 in total) in the critical point
+
+scuole.nomi <- c("R.Belenzani", "B.S.Bellesini", "M.Bianca", "Clarina", "F.Crispi", "S.A.Gorfer", "A.Mattarello", "U.Moggioli", "A.Nicolodi", "Pigarelli", "Ravina", "Santa.Chiara", "Sant.Anna", "R.Sanzio", "D.Savio", "A.Schmid", "S.Vigilio", "R.Zandonai") # school names
+
+num.acc <- c(23, 57, 27, 78, 154, 301, 18, 21, 19, 37, 21, 21, 64, 145, 46, 278, 17, 33) # Number of accidents 2003-2020
+n <- num.acc/17.66 # in averaged number of accidents per year
+
+# punti critici (incroci, rotatorie,...)
+punti <- c("Rotatoria Via Bassano", "Incrocio Corso M.Buonarroti e Piazza A.Cantore", "Via C.Menguzzato e uscita Via A.Marighetto", "Viale Verona, incroci Via L.Einaudi, via E. Chini", "Rotatoria Fontana Delle Naiadi", "Rotatoria Via del Brennero, Via dei Caduti di Nassiriya", "Rotatoria Via Nazionale, SP21", "Piazza Giannantonio Manci", "Rotatoria Via Gocciadoro, Via Paolo Orsi", "Corsia di inserimento in SS12 (direzione sud)", "Via del Ponte, Via Stella", "Rotatoria Largo Medaglie d'oro", "Rotatoria SS12", "Incrocio Via G.D.Romagnosi, Via Torre Verde", "Rotatoria Via H.Jedin, Via al Desert", "Rotatoria Via E.Maccani, Via dei Caduti di Nassiriya", "Curva Stada Gardesana verso SP85", "Incrocio Via dei Bergamini, Via dell'Albera")
+
+# dataframe with schools, number of accidents, critical points
+scuole <- data.frame(x=seq(1:18), media_incidenti=rev(n), punto_critico=punti)
+
+# colors
+c1 <- "orangered1" # y text and points
+c2 <- "orange1" # line
+  
+# Horizontal version of lollipop chart
+ps <- ggplot(scuole, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=22, by=2)) +
+  scale_x_continuous(breaks=1:18, labels=rev(scuole.nomi), sec.axis=sec_axis(~., breaks = 1:18, labels=rev(punti), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle scuole", subtitle="Scuole Primarie", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+ps
+
+# Visualization of interactive lollipop plot
+# to change plot title
+# The link to html is shared in the article
+
+scuole$media_incidenti <- round(scuole$media_incidenti,2) # round the mean of accidents per year for text that will appear in the interactive plot
+
+ps <- ggplot(scuole, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=22, by=2)) +
+  scale_x_continuous(breaks=1:18, labels=rev(scuole.nomi), sec.axis=sec_axis(~., breaks = 1:18, labels=rev(punti), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle Scuole Primarie", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+
+psi <- ggplotly(ps, tooltip=c("media_incidenti","punto_critico")) # turn it interactive with ggplotly
+saveWidget(psi, file="Scuole_Primarie_punti_critici_lollipop_interaction.html") # save the widget as html
+```
+```{r}
+# SCUOLE MEDIE (scuole secondarie di primo grado)
+# Data cleaning
+# Delete schools with a number of accident < 1 per year (at least 17 in total) in the critical point
+
+scuole.nomi2 <- c("d.Argentario", "Ist.Artevittoria", "F.A.Bonporti", "G.Bresadola", "Bronzetti.Segantini", "Fogazzaro", "A.Manzoni", "G.Pedrolli", "O.Winkler") # school names
+num.acc2 <- c(20,78,154,41,84,25,86,37,34) # Number of accidents 2003-2020
+n2 <- num.acc2/17.66 # in averaged number of accidents per year
+
+# punti critici (incroci, rotatorie,...)
+punti2 <- c("Incrocio Via Valsugana, Via alla Cascata", "Viale Verona, incroci Via L.Einaudi, via E. Chini", "Fontana Delle Naiadi", "Incrocio Via A.Rosmini, Via G.B.Borsieri", "Incrocio Via V.Veneto, Corso.3.Novembre", "Rotatoria Via Nazionale, SP21", "Rotonda alla Funivia", "Corsia di inserimento in SS12 (direzione sud)", "Incrocio Viale Verona, Via della Malpensada")
+
+# dataframe with schools, number of accidents, critical points
+scuole2 <- data.frame(x=seq(1:9), media_incidenti=rev(n2), punto_critico=punti2)
+
+# colors
+c1 <- "green4" # y text and points
+c2 <- "darkolivegreen2" # line
+
+# Horizontal version of lollipop chart
+ps2 <- ggplot(scuole2, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=22, by=2)) +
+  scale_x_continuous(breaks=1:9, labels=rev(scuole.nomi2), sec.axis=sec_axis(~., breaks = 1:9, labels=rev(punti2), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle scuole", subtitle="Scuole Secondarie di primo grado", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+ps2
+
+# Visualization of interactive lollipop plot
+# to change plot title
+# The link to html is shared in the article
+
+scuole2$media_incidenti <- round(scuole2$media_incidenti,2) # round the mean of accidents per year for text that will appear in the interactive plot
+
+ps2 <- ggplot(scuole2, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=22, by=2)) +
+  scale_x_continuous(breaks=1:9, labels=rev(scuole.nomi2), sec.axis=sec_axis(~., breaks = 1:9, labels=rev(punti2), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle Scuole Secondarie di primo grado", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+
+ps2i <- ggplotly(ps2, tooltip=c("media_incidenti","punto_critico")) # turn it interactive with ggplotly
+saveWidget(ps2i, file="Scuole_Secondarie_1grado_punti_critici_lollipop_interaction.html") # save the widget as html
+```
+```{r}
+# SCUOLE SUPERIORI (scuole secondarie di secondo grado)
+# Data cleaning
+# Delete schools with a number of accident < 1 per year (at least 17 in total) in the critical point
+
+scuole.nomi3 <- c("Buonarroti", "Delle.Arti", "G.Galilei", "S.Magdalena", "G.Prati", "A.Rosmini", "A.Tombosi", "L.Da.Vinci") # school names
+num.acc3 <- c(26, 365, 31, 73, 154, 84, 41, 50) # Number of accidents 2003-2020
+n3 <- num.acc3/17.66 # in averaged number of accidents per year
+
+# punti critici (incroci, rotatorie,...)
+punti3 <- c("Incrocio Via B.Acqui, SS349", "Rotatoria Via del Brennero, Via V.Zambra", "Rotatoria Viale Trieste, SS349", "Incrocio Via Fratelli Perini, Via G.Giusti", "Fontana Delle Naiadi", "Incrocio Via V.Veneto, Corso.3.Novembre", "Incrocio Via B.Acqui, Via F. Barbacovi", "Incrocio Via Piave, Corso.3.Novembre")
+
+# dataframe with schools, number of accidents, critical points
+scuole3 <- data.frame(x=seq(1:8), media_incidenti=rev(n3), punto_critico=punti3)
+
+# colors
+c1 <- "midnightblue" # y text and points
+c2 <- "dodgerblue1" # line
+
+# Horizontal version of lollipop chart
+ps3 <- ggplot(scuole3, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=30, by=2)) +
+  scale_x_continuous(breaks=1:8, labels=rev(scuole.nomi3), sec.axis=sec_axis(~., breaks = 1:8, labels=rev(punti3), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle scuole", subtitle="Scuole Secondarie di secondo grado", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+ps3
+
+# Visualization of interactive lollipop plot
+# to change plot title
+# The link to html is shared in the article
+
+scuole3$media_incidenti <- round(scuole3$media_incidenti,2) # round the mean of accidents per year for text that will appear in the interactive plot
+
+ps3 <- ggplot(scuole3, aes(x=x, y=media_incidenti, label=punto_critico)) +
+  geom_segment( aes(x=x, xend=x, y=0, yend=media_incidenti), color=c2, size=1) +
+  geom_point( color=c1, size=4, alpha=0.6) +
+  theme_light() +
+  scale_y_continuous(breaks=seq(from=0, to=30, by=2)) +
+  scale_x_continuous(breaks=1:8, labels=rev(scuole.nomi3), sec.axis=sec_axis(~., breaks = 1:8, labels=rev(punti3), name="punti più critici")) +
+  labs(title="Punti stradali critici nei pressi delle Scuole Secondarie di secondo grado", x="scuole", y="numero di incidenti in media all'anno") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank(), panel.border = element_blank(), panel.grid.minor.y=element_blank()) +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.title.y.left=element_text(colour=c1), axis.text=element_text(size=8), axis.text.y.left=element_text(colour=c1, face="italic"), plot.subtitle=element_text(size=10, face="bold"))
+
+ps3i <- ggplotly(ps3, tooltip=c("media_incidenti","punto_critico")) # turn it interactive with ggplotly
+saveWidget(ps3i, file="Scuole_Secondarie_2grado_punti_critici_lollipop_interaction.html") # save the widget as html
+```
+
+```{r}
+# MONTE BONDONE
+# dataframe with Monte Bondone data
+# summary of all calculations
+
+bondone <- data.frame(
+  tratto=seq(0:17)-1,
+  pendenza=c(7.8, 8.7, 7.8, 6.5, 7.4, 7.6, 8.8, 8.4, 7.8, 8.5, 5.8, 8.2, 7.8, 7.3, 7.7, 7.6, 8.2, 8.6),
+  curve=c(1,4,1,2,0,7,1,2,5,6,3,1,2,4,6,3,4,2),
+  incidenti_tot=c(9,8,4,9,5,2,2,1,4,4,2,3,2,2,4,6,9,1),
+  incidenti_curva=c(1,4,1,2,0,1,1,1,2,2,2,1,1,0,3,3,5,0))
+```
+
+```{r}
+# Adding text to plot
+text_high <- textGrob("Arrivo", gp=gpar(fontsize=8, fontface="italic"))
+text_low <- textGrob("Partenza", gp=gpar(fontsize=8, fontface="italic"))
+
+# Visualization of plots
+a <- ggplot(data=bondone, aes(x=tratto, y=incidenti_tot)) +
+  geom_point(aes(fill=curve), color="black", shape=22, alpha=0.5, size=6, stroke = 1) +
+  geom_segment( aes(x=tratto, xend=tratto, y=0, yend=incidenti_tot)) +
+  labs(title="Incidenti sulla salita del Monte Bondone", subtitle="In relazione al numero di curve di ciascun tratto", x="tratto", y="numero incidenti 2003-2020", fill="numero curve") +
+  scale_y_continuous(breaks=seq(0,10,1)) +
+  scale_x_continuous(breaks=seq(0,17,1)) +
+  scale_fill_gradient(low="white",high="blue") +
+  theme_minimal() +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.text=element_text(size=8), legend.title=element_text(size=10, face="bold")) +
+  annotation_custom(text_high,xmin=17,xmax=17,ymin=-1.5,ymax=-1.5) +
+  annotation_custom(text_low,xmin=0,xmax=0,ymin=-1.5,ymax=-1.5) +
+  coord_cartesian(clip="off")
+a
+
+b <- ggplot(data=bondone, aes(x=tratto, y=incidenti_curva)) +
+  geom_point(aes(fill=curve), color="black", shape=22, alpha=0.5, size=6, stroke=1) +
+  geom_segment( aes(x=tratto, xend=tratto, y=0, yend=incidenti_curva)) +
+  labs(title="Incidenti sulla salita del Monte Bondone", subtitle="Analisi dei soli incidenti avvenuti in curva", x="tratto", y="incidenti in curva", fill="numero curve") +
+  scale_y_continuous(limits=c(0,9), breaks=seq(0,9,1)) +
+  scale_x_continuous(breaks=seq(0,17,1)) +
+  scale_fill_gradient(low="white",high="blue") +
+  theme_minimal() +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.text=element_text(size=8), legend.title=element_text(size=10, face="bold")) +
+  annotation_custom(text_high,xmin=17,xmax=17,ymin=-1.5,ymax=-1.5) +
+  annotation_custom(text_low,xmin=0,xmax=0,ymin=-1.5,ymax=-1.5) +
+  coord_cartesian(clip="off")
+b
+
+c <- ggplot(data=bondone, aes(x=tratto, y=incidenti_tot)) +
+  geom_point(aes(fill=pendenza), color="black", shape=22, alpha=0.5, size=6, stroke = 1) +
+  geom_segment( aes(x=tratto, xend=tratto, y=0, yend=incidenti_tot)) +
+  labs(title="Incidenti sulla salita del Monte Bondone", subtitle="In relazione alla pendenza di ciascun tratto", x="tratto", y="numero incidenti 2003 - 2020", fill="pendenza in %") +
+  scale_y_continuous(breaks=seq(0,10,1)) +
+  scale_x_continuous(breaks=seq(0,17,1)) +
+  scale_fill_gradient(low="white",high="red") +
+  theme_minimal() +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.text=element_text(size=8), legend.title=element_text(size=10, face="bold")) +
+  annotation_custom(text_high,xmin=17,xmax=17,ymin=-1.5,ymax=-1.5) +
+  annotation_custom(text_low,xmin=0,xmax=0,ymin=-1.5,ymax=-1.5) +
+  coord_cartesian(clip="off")
+c
+
+d <- ggplot(data=bondone, aes(x=tratto, y=incidenti_curva)) +
+  geom_point(aes(fill=pendenza), color="black", shape=22, alpha=0.5, size=6, stroke = 1) +
+  geom_segment( aes(x=tratto, xend=tratto, y=0, yend=incidenti_curva)) +
+  labs(title="Incidenti sulla salita del Monte Bondone", subtitle="Analisi dei soli incidenti avvenuti in curva", x="tratto", y="incidenti in curva", fill="pendenza in %") +
+  scale_y_continuous(limits=c(0,9), breaks=seq(0,9,1)) +
+  scale_x_continuous(breaks=seq(0,17,1)) +
+  scale_fill_gradient(low="white",high="red") +
+  theme_minimal() +
+  theme(plot.title=element_text(size=15, face="bold"), axis.title=element_text(size=10, face="bold"), axis.text=element_text(size=8), legend.title=element_text(size=10, face="bold")) +
+  annotation_custom(text_high,xmin=17,xmax=17,ymin=-1.5,ymax=-1.5) +
+  annotation_custom(text_low,xmin=0,xmax=0,ymin=-1.5,ymax=-1.5) +
+  coord_cartesian(clip="off")
+d
+```
